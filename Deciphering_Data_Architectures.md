@@ -5,7 +5,7 @@
 * In relational database, consistency and data integrity is important and hence it follows schema-on-write.
 * Schema-on-read more flexibility in storing unstructured and semi structured data. Commonly used in Data Lake.
 ##### Relational Data Warehouse
-* Relational Data Warehouse is a type of database that is optimized for analytics and holding large data.
+* Relational Data Warehouse, type of database, optimized for analytics and holding large data.
 * RDW has both compute and storage. whereas cloud based warehouses have them seperate, this helps in scaling independently. This also means that in RDW since they both are tightly coupled we need to upgrade both or some hardware accompanying it.
 * Important features of RDW include:
     1. Trasaction support
