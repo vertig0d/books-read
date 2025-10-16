@@ -49,3 +49,5 @@
     3. SCD type: which column to use to identify the change, can be timestamp.
 
 ## Chapter 5 - Data Lake
+* Unlike RDW, supports semi and unstructured data.
+* 
