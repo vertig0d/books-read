@@ -15,4 +15,37 @@
 ##### Data Lake
 * A glorified filesystem, no different from file storage in laptop.
 * Has no compute engine associated.
-* Unlike RDW which uses relational storage, Data Lake uses object storage.
+
+* Unlike RDW which uses relational storage, Data Lake uses object storage. Also, practices schema-on-read.
+* Supports all file types, i.e. structured, semi-structured and unstructured.
+* Drawback: requires advanced skills to handle.
+
+##### Modern Data Warehouse
+* Collab of RDW and Data Lake, by using both side by side.
+* Data lake for staging and preparing data, RDW for serving, security and business uses.
+
+##### Data Mesh
+* Each department such as sales, finance have their own IT team that takes care of the data, instead of a centralized data dumping ground. 
+
+## Chapter 4 - The Relational Data Warehouse
+* Acts as central repo and used as _Single Source Of Truth_.
+* Enterprise level data warehouse is called EDM.
+* Note, DW is not a dumping ground and not a view with union or joins, instead data actually reside here.
+* _Descriptive Analysis:_ used to answer the question "What happened", by using past or history data and summary statistics or visualisation.
+* _Diagnostic Analysis:_ used to answer "Why something happened", by using past data and finding the relation. Usually done by changing the values and seeing the impact. eg. root cause analysis
+##### Advantage of RDW
+1. Optimised for read so returns result faster
+2. Get data from multiple sources.
+3. Get historical report
+4. improve data quality by fixing issues from source, like data type, naming, standardization 
+##### Disadvantages of RDW
+1. Complex
+2. High Cost
+3. Limited flexibility
+##### Populating RDW
+* Many things to consider when populating the RDW, 
+    1. Frequency: whether daily, hourly, weekly etc the RDW needs to fetch data from source
+    2. Extract method, Incremental or Overwrite the data from source
+    3. SCD type: which column to use to identify the change, can be timestamp.
+
+## Chapter 5 - Data Lake
