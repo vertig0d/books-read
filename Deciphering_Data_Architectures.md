@@ -51,4 +51,24 @@
 ## Chapter 5 - Data Lake
 * Unlike RDW, supports semi and unstructured data.
 * Stores data in raw format, meaning no transformations are performed. Hence, quick to load data from sources. Follows schema-on-read.
-* _Predictive Analytics:_ 
+* _Predictive Analytics:_ based on the historical data predict the outcome of an event. eg. predict the customer who might become loan defaulter.
+* _Prescriptive analytics:_ one step further to predictive analytics where based on the prediction some suggestions are provided. eg. predict traffic congestion and provide alternative routes.
+* _Data Modeling:_ a blue print to understand data. It aids in understanding the relation between data, which data are important. 
+##### Best Practices for Data Lake
+* Without some rules implied the Data Lake can become a _Data Swamp_, which means an unmanaged and unorganized data.
+* First, divide the data into multiple layers, also called zones. These zones can be : 
+    1. __Raw Layer__: Landing zone for source data into the data lake.
+    2. __Conformed Layer__: where different source file formats are changed to a uniform format, such as csv, json to parquet.
+    3. __Cleansed Layer__: transform data to implement the standardization in data. 
+    4. __Presentation Layer__: implement the business logics, like aggregations.
+    5. __Sandbox Layer__: playground for data science team, so that data is not mixed with the production ready data.
+* Second, create folder structure, this can help in the following:
+    1. __Data Segregation__: based on source, business type, or data type.
+    2. __Access Control__
+    3. __Data Lifecycle Management__
+    4. __Performance Optimisation__: can help in certain cases where relative data is grouped together. I can only think of z-ordering, will check with gpt.
+    5. __Data Versioning__: time travel feature comes to mind in delta tables.
+    6. __Backup and Disastor Recovery__: again time travel feature
+    7. __Metadata Management__: used to segregate and manage metadata from raw data.
+    8. __Data Partitioning__
+    9. __Compliance__
