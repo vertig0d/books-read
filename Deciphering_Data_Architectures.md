@@ -50,4 +50,5 @@
 
 ## Chapter 5 - Data Lake
 * Unlike RDW, supports semi and unstructured data.
-* 
+* Stores data in raw format, meaning no transformations are performed. Hence, quick to load data from sources. Follows schema-on-read.
+* _Predictive Analytics:_ 
