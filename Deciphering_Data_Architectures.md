@@ -71,4 +71,17 @@
     6. __Backup and Disastor Recovery__: again time travel feature
     7. __Metadata Management__: used to segregate and manage metadata from raw data.
     8. __Data Partitioning__
-    9. __Compliance__
+    9. __Compliance__: can help with region specific compliance.
+
+## Ch 6 - Data Storage Solution and Processes
+
+##### Different Data Storage
+1. _Data Mart_: Subset of DW, where the data is specific to a department or a business line. This helps in forming specific governance, better control of data. eg. a Finance and HR department can each have its own Data Mart managed by themselves. 
+2. _Operational Data Store (ODS)_: Unlike Data Mart which is more detailed, ODS is more on a high level. It has current or near real time operational data. Data Mart has all the data related to that specific dept, whereas ODS has Enterprise level data. Not optimised for historical or trend analysis, that is done in DW, and might have basic transformations. eg. imagine going to a store to buy PS5 but they are out of stock, but the sales rep quickly checks the inventory of a different branch.
+3. _Data Hubs_: Centralized data storage and management system, that collects, integrate, store, organise and share data. Similar to Data Lake, except Data Lake is used for big data and analytics.
+4. _Data Catalogue_: Consists only of metadata of tables, used for data discovery and metadata management.
+5. _Data Marketplace_: a place to sell, share and buy data.
+
+##### Data Processes
+* Different stratergies and solution to capitalize, transform and govern the data.
+1. _Master Data Management (MDM)_: Involves creation of a single master record for each person or item.
