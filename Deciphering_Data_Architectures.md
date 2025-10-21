@@ -84,4 +84,15 @@
 
 ##### Data Processes
 * Different stratergies and solution to capitalize, transform and govern the data.
-1. _Master Data Management (MDM)_: Involves creation of a single master record for each person or item.
+1. _Master Data Management (MDM)_: Involves creation of a single master record for each person or item in business across internal and external sources.
+
+## Ch 7 - Approaches to Design
+
+##### Online Transaction Processing (OLTP)
+* System which process CRUD operations (Create, Read, Update, Delete).
+* Which support multiple transactions at the same time -> high concurrency.
+* Which use relational model and have low latency -> fast operations.
+
+##### Online Analytic Processing (OLAP)
+* Used for reporting and analytics
+* Optimized for fast reads, follows write once and read many principle.
