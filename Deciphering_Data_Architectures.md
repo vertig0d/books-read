@@ -92,7 +92,19 @@
 * System which process CRUD operations (Create, Read, Update, Delete).
 * Which support multiple transactions at the same time -> high concurrency.
 * Which use relational model and have low latency -> fast operations.
+* Normalized database (3NF)
+* Smaller than OLAP (few GBs)
 
 ##### Online Analytic Processing (OLAP)
 * Used for reporting and analytics
 * Optimized for fast reads, follows write once and read many principle.
+* Denormalized database
+* Bigger database size than OLTP (TBs)
+
+##### Symmetric MultiProcessing vs Massive Parallel Processing
+* _Symmetric Multiprocessing_ : think MS SQL or Oracle where multiple CPUs that share the same memory and disk. This is an example of __scale up__. 
+* _Massively Parallel Processing_ : Think distributed system, and how name node and worker node work. This is an example of __scale out__.
+
+##### END
+##### OF
+##### NOTES
