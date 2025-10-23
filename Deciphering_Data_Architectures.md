@@ -105,6 +105,8 @@
 * _Symmetric Multiprocessing_ : think MS SQL or Oracle where multiple CPUs that share the same memory and disk. This is an example of __scale up__. 
 * _Massively Parallel Processing_ : Think distributed system, and how name node and worker node work. This is an example of __scale out__.
 
+##### Lambda Architecture
+* 
 ##### END
 ##### OF
 ##### NOTES
