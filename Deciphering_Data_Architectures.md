@@ -106,7 +106,37 @@
 * _Massively Parallel Processing_ : Think distributed system, and how name node and worker node work. This is an example of __scale out__.
 
 ##### Lambda Architecture
-* 
+* Architecture design that handles both _batch processing_ and _streaming processing_, by bridging the historical data with real time data.
+* Lambda has 3 principles:
+1. _Dual Data Model_: allows system to handle one batch and one real time or stream data.
+2. _Single Unified View_: also called _Presentation Layer_ where user can view both batch and stream data, even though both are different systems.
+3. _Decoupled Processing Layer_: both the batch and the stream layer can be scaled, developed and maintained independently.
+* Drawbacks of Lambda:
+1. _Complexity_: complex to implement and maintain.
+2. _Limited Real time processing_: not efficient in handling large volume of real time data.
+3. _Limited Support for Stateful processing_: Suppose in an ecommerce website, a customer buys shoes. Lambda architecture might not remember the state and in turn make suggestions like socks or shoe stand. Since it processes each event separately.
+![Lambda Architecture](https://learning.oreilly.com/api/v2/epubs/urn:orm:book:9781098150754/files/assets/deda_0703.png)
+
+##### Kappa Architecture
+* Designed for high volumn and high concurrency
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ##### END
 ##### OF
 ##### NOTES
