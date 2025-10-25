@@ -118,7 +118,16 @@
 ![Lambda Architecture](https://learning.oreilly.com/api/v2/epubs/urn:orm:book:9781098150754/files/assets/deda_0703.png)
 
 ##### Kappa Architecture
-* Designed for high volumn and high concurrency
+* Designed for high volumn and high concurrency real time processes
+* Exactly the same as Lambda except no batch layer
+* Drawback of Kappa:
+1. Complexity
+2. Limited support for batch
+3. Limited support for ad-hoc requests: ad-hoc needs historical data and Kappa does real time.
+
+##### Polyglot Persistence and Polyglot Data Stores
+* _Polyglot Persistence_: Multiple data storage technologies to store different kinds of data in a single system or application.
+* _Polyglot Data Store_: instead of single application or system this is across the entire enterprise or organization. 
 
 
 
