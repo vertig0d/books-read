@@ -73,7 +73,7 @@
     8. __Data Partitioning__
     9. __Compliance__: can help with region specific compliance.
 
-## Ch 6 - Data Storage Solution and Processes
+## Chapter 6 - Data Storage Solution and Processes
 
 ##### Different Data Storage
 1. _Data Mart_: Subset of DW, where the data is specific to a department or a business line. This helps in forming specific governance, better control of data. eg. a Finance and HR department can each have its own Data Mart managed by themselves. 
@@ -86,7 +86,7 @@
 * Different stratergies and solution to capitalize, transform and govern the data.
 1. _Master Data Management (MDM)_: Involves creation of a single master record for each person or item in business across internal and external sources.
 
-## Ch 7 - Approaches to Design
+## Chapter 7 - Approaches to Design
 
 ##### Online Transaction Processing (OLTP)
 * System which process CRUD operations (Create, Read, Update, Delete).
@@ -128,6 +128,10 @@
 ##### Polyglot Persistence and Polyglot Data Stores
 * _Polyglot Persistence_: Multiple data storage technologies to store different kinds of data in a single system or application.
 * _Polyglot Data Store_: instead of single application or system this is across the entire enterprise or organization. 
+
+## Chapter 8 - Approaches to Data Modeling
+* Data modeling: a technique used to design a database.
+* 
 
 
 
