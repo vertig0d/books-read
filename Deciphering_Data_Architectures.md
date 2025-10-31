@@ -131,7 +131,18 @@
 
 ## Chapter 8 - Approaches to Data Modeling
 * Data modeling: a technique used to design a database.
-* 
+##### Relational Modeling
+* Involves designing data into tables and defining relations between tables.
+* __Normalization Rules and Forms__: way to decompose and split complex database into simpler tables.
+1. _1 NF_:  
+__a.__ Table has a Primary key column. 
+__b.__ Each attribute in the table has a single value and not a list. 
+__c.__ Table should not have any repititve columns, such as 'Course1', 'Course2', 'Course3'.
+2. _2 NF_: Satisfies all the 1 NF conditions, plus:
+__a.__ 
+
+
+
 
 
 
