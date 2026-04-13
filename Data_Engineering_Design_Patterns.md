@@ -1,3 +1,5 @@
+![Book Cover](https://learning.oreilly.com/covers/urn:orm:book:9781098165826/400w/)
+
 ## Index
 1. [Introducing Data Engineering Design Patterns](#Introducing-Data-Engineering-Design-Patterns)
 2. [Data Ingestion Design Patterns](#Data-Ingestion-Design-Patterns)
