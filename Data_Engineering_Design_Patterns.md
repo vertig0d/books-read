@@ -106,6 +106,74 @@ Challenges:
 #### Duplicate Records
 ##### Windowed Deduplicator
 
+### 1. Core Concepts & Scope
+* **Goal:** Ensure data logic processes each unique record exactly once.
+* **Step 1:** Identify deduplication attributes (unique keys).
+* **Step 2:** Define the deduplication scope.
+    * **Batch:** Typically limited to the currently processed dataset. Extending to past datasets requires more compute and slows down processing.
+    * **Streaming:** Unbounded data is handled by creating **time-based windows**.
+
+### 2. Implementation Strategies
+* **Batch Pipelines:** * Relies on standard SQL operations.
+    * Uses `DISTINCT` expressions or `WINDOW` functions paired with `row_number()`.
+* **Streaming Pipelines:** * More complex logic due to unbounded data.
+    * Requires a **State Store** to remember previously processed records over a specific window duration.
+
+### 3. State Store Types (Streaming)
+| Type | Location | Pros | Cons |
+| :--- | :--- | :--- | :--- |
+| **Local** | Memory-only | Fastest performance. | State is lost upon failure (not for production). |
+| **Local + Fault-Tolerant** | Memory + Remote Backup | Fast access with fault tolerance. | Cost to processing time/consistency during persistence. |
+| **Remote** | Remote DB/Store | Natively fault-tolerant. | Higher latency and overall pipeline cost. |
+
+### 4. Trade-offs & Limitations
+* **Processing vs. Delivery:** Exactly-once *processing* does not guarantee exactly-once *delivery*. 
+* **Space vs. Time Trade-off:** Keeping all data indefinitely is impossible. Systems use time-based windows to look for duplicates only within a specified period to save space.
+* **Idempotent Producers:** Deduplication alone doesn't prevent downstream duplicates caused by transient errors or automatic retries.
+
+### 5. Tooling: Apache Spark & SQL
+* **Batch:** Use Spark's `dropDuplicates` function or SQL `WINDOW` functions.
+* **Streaming:** Use `dropDuplicates` mapped to a time-based column.
+    * **Watermarks:** Crucial for streaming state management.
+        * *Function 1:* Sets the late data boundary (ignores data older than the watermark).
+        * *Function 2:* Clears old deduplication keys from the state store to free up memory.
+
+---
+
+### Visual Flow Diagrams
+
+**Batch Deduplication Flow**
+` ` `text
+[Input Dataset] 
+      │
+      ▼
+[Identify Keys] ──► (Compare against CURRENT dataset)
+      │
+      ▼
+[Apply DISTINCT / WINDOW + row_number()]
+      │
+      ▼
+[Output Unique Records]
+` ` `
+
+**Streaming Deduplication Flow**
+` ` `text
+[Continuous Input Stream] 
+      │
+      ▼
+[Extract Key & Event Time]
+      │
+      ▼
+[Check STATE STORE within Watermark Window]
+      │
+      ├─────► (If Key Exists) ──► [Drop Record]
+      │
+      ▼
+[Record is New] ──► (Save Key to State Store)
+      │
+      ▼
+[Process & Output]
+` ` `
 
 
 
