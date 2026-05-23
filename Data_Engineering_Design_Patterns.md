@@ -143,7 +143,6 @@ Challenges:
 ### Visual Flow Diagrams
 
 **Batch Deduplication Flow**
-` ` `text
 [Input Dataset] 
       │
       ▼
@@ -154,10 +153,8 @@ Challenges:
       │
       ▼
 [Output Unique Records]
-` ` `
 
 **Streaming Deduplication Flow**
-` ` `text
 [Continuous Input Stream] 
       │
       ▼
@@ -173,7 +170,6 @@ Challenges:
       │
       ▼
 [Process & Output]
-` ` `
 
 
 
