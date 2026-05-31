@@ -103,35 +103,35 @@ Challenges:
 * Dead-lettered records identification: distinguish them from the rows added in the normal ingestion pipeline. useful to implement a filtering condition skipping replayed records in the downstream consumers or to simply track the origin of each row. add a boolean column or an attribute called was_dead_lettered to indicate each record produced by the Dead-Letter replay job.
 * Error-safe functions: instead of throwing a runtime exception in case of an error, they return a NULL value. Moreover, all this logic is fully managed by your framework or database. However, these error-hiding functions make the Dead-Letter pattern implementation more challenging.
 
-#### Duplicate Records
-##### Windowed Deduplicator
+### Duplicate Records
+#### Windowed Deduplicator
 
-### 1. Core Concepts & Scope
+##### 1. Core Concepts & Scope
 * **Goal:** Ensure data logic processes each unique record exactly once.
 * **Step 1:** Identify deduplication attributes (unique keys).
 * **Step 2:** Define the deduplication scope.
     * **Batch:** Typically limited to the currently processed dataset. Extending to past datasets requires more compute and slows down processing.
     * **Streaming:** Unbounded data is handled by creating **time-based windows**.
 
-### 2. Implementation Strategies
+##### 2. Implementation Strategies
 * **Batch Pipelines:** * Relies on standard SQL operations.
     * Uses `DISTINCT` expressions or `WINDOW` functions paired with `row_number()`.
 * **Streaming Pipelines:** * More complex logic due to unbounded data.
     * Requires a **State Store** to remember previously processed records over a specific window duration.
 
-### 3. State Store Types (Streaming)
+##### 3. State Store Types (Streaming)
 | Type | Location | Pros | Cons |
 | :--- | :--- | :--- | :--- |
 | **Local** | Memory-only | Fastest performance. | State is lost upon failure (not for production). |
 | **Local + Fault-Tolerant** | Memory + Remote Backup | Fast access with fault tolerance. | Cost to processing time/consistency during persistence. |
 | **Remote** | Remote DB/Store | Natively fault-tolerant. | Higher latency and overall pipeline cost. |
 
-### 4. Trade-offs & Limitations
+##### 4. Trade-offs & Limitations
 * **Processing vs. Delivery:** Exactly-once *processing* does not guarantee exactly-once *delivery*. 
 * **Space vs. Time Trade-off:** Keeping all data indefinitely is impossible. Systems use time-based windows to look for duplicates only within a specified period to save space.
 * **Idempotent Producers:** Deduplication alone doesn't prevent downstream duplicates caused by transient errors or automatic retries.
 
-### 5. Tooling: Apache Spark & SQL
+##### 5. Tooling: Apache Spark & SQL
 * **Batch:** Use Spark's `dropDuplicates` function or SQL `WINDOW` functions.
 * **Streaming:** Use `dropDuplicates` mapped to a time-based column.
     * **Watermarks:** Crucial for streaming state management.
@@ -140,9 +140,10 @@ Challenges:
 
 ---
 
-### Visual Flow Diagrams
+##### Visual Flow Diagrams
 
 **Batch Deduplication Flow**
+```text
 [Input Dataset] 
       │
       ▼
@@ -153,8 +154,10 @@ Challenges:
       │
       ▼
 [Output Unique Records]
+```
 
 **Streaming Deduplication Flow**
+```text
 [Continuous Input Stream] 
       │
       ▼
@@ -170,9 +173,84 @@ Challenges:
       │
       ▼
 [Process & Output]
+```
 
+### Late Data Detection
 
+#### 1. Late Data Detection & Watermarks
+* **Core Concept:** You must track **Event Time** (when the action happened), not processing time, to detect late data.
+* **Tracking Strategies (Event Time):** The tracked time must be *monotonically increasing* (never go backward).
+    * *Partition-Level:* Always use `MAX(event time)`. Using `MIN` causes infinite state growth ("stuck in the past") or forces reopening completed states ("open-close-open loop").
+    * *Global-Level:* Use `MIN` to follow the slowest dependency (maximizes data, increases buffer size) or `MAX` to follow the fastest (reduces buffer, but risks dropping data in skewed networks).
+* **Watermarks:** Defines the boundary for "on-time" data. 
+    * *Formula:* `Watermark = MAX(event time) - allowed lateness`.
+* **Tooling:** Apache Spark automatically ignores late events but makes capturing them hard. Apache Flink allows easy capture and redirection of late data using the current watermark and a timestamp assigner.
 
+#### 2. Static Late Data Integrator
+* **Concept:** Uses a fixed lookback window (e.g., last 14 days) to routinely reprocess past partitions alongside the current run.
+* **Limitation:** Any late data arriving outside this fixed window is permanently ignored. Requires time-based partitions.
+* **Execution:** Stateful pipelines must run sequentially (late data first). Stateless pipelines can run in parallel or prioritize current data.
+
+#### 3. Dynamic Late Data Integrator
+* **Concept:** Integrates *only* the specific partitions that actually received late data, using a state table to compare `Last update time` against `Last processed time`.
+* **Metadata Sources:** Tools like BigQuery (`INFORMATION_SCHEMA.PARTITIONS`) or Iceberg natively provide these last-modified timestamps.
+* **Concurrency Management (The Race Condition):**
+    * *The Problem:* In concurrent systems, multiple pipelines might read the state table simultaneously and process the exact same late data.
+    * *The Solution:* Add an `Is_processed` boolean flag to the state table as a lock (Pipeline only processes if `Update Time > Processed Time` AND `Is_processed = False`).
+
+#### 4. Backfilling & The Snowball Effect
+* **The Snowball Effect:** Reprocessing late data forces downstream consumers to also backfill, causing massive compute spikes. Best practice is to notify consumers and let them handle their own pipelines.
+* **Backfill Rule:** Never replay all historical runs individually. Simply run the most recent execution that covers the lookback window to avoid overlapped, duplicated processing.
+* **Pipeline Design:** Backfilling jobs must remain inside the main pipeline to prevent overlapping execution issues.
+
+#### 5. Static vs. Dynamic Integration
+| Feature | Static Integrator | Dynamic Integrator |
+| :--- | :--- | :--- |
+| **Trigger Mechanism** | Fixed lookback window (e.g., 14 days) | State table changes (Update Time > Processed Time) |
+| **Efficiency** | Lower (reprocesses windowed partitions blindly) | Higher (targets only changed partitions/entities) |
+| **Implementation** | Simple | Complex (requires state tables, metadata, and locks) |
+
+---
+
+#### Visual Flow Diagrams
+
+**Late Data Detection & Watermark Flow**
+```text
+[Incoming Record] ──► Extract [Event Time]
+      │
+      ▼
+[System Tracks Time] ──► Watermark = MAX(Event Time) - Allowed Lateness
+      │
+      ▼
+[Compare] Is Record Event Time < Watermark?
+      │
+      ├─────► [YES: Late] ──► (Spark: Ignore / Flink: Capture)
+      │
+      ▼
+[NO: On Time] ──► [Process Record & Update State]
+```
+
+**Dynamic Late Data Flow with Concurrency Lock**
+```text
+[Pipeline Wakes Up]
+      │
+      ▼
+[Check State Table] ──► Update Time > Processed Time AND Is_processed = False?
+      │
+      ├─────► (NO / Locked) ──► [Skip Partition]
+      │
+      ▼
+[YES: Target Identified]
+      │
+      ▼
+[Lock Partition] ──► Update State Table: Set Is_processed = True
+      │
+      ▼
+[Process Late Data] ──► Backfill or Overwrite impacted entities
+      │
+      ▼
+[Unlock & Update] ──► Set Processed Time = NOW, Set Is_processed = False
+```
 
 
 
