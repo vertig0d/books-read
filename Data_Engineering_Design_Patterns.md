@@ -252,9 +252,67 @@ Challenges:
 [Unlock & Update] ──► Set Processed Time = NOW, Set Is_processed = False
 ```
 
+### Fault Tolerance & Checkpointing Study Notes
+
+#### 1. Core Concepts
+* **Fault Tolerance:** Protection that ensures continuous data processing workflows (streaming) can recover from failures without data loss or duplication.
+* **The Challenge:** Streaming data often arrives in an append-only log without the organizational structure of batch data. If a job stops, the system must know exactly where to resume to avoid reprocessing old data or missing new data.
+* **The Checkpointer Pattern:** Solves this by persistently recording the job's progress (both the position in the data source and the computed state) outside of the job's transient environment.
+
+#### 2. Where Checkpoints are Stored
+Checkpoint data can be managed at two different levels, depending on your architecture:
+| Storage Type | Description | Examples |
+| :--- | :--- | :--- |
+| **Framework-based** | Progress metadata is managed by the data processing framework and stored in a resilient object store. | Apache Spark Structured Streaming, Apache Flink |
+| **Data store-based** | Progress is tracked by interacting directly with the data store's SDK and saved within the data store's ecosystem. | Apache Kafka (saves to `__consumer_offsets` topic), Amazon Kinesis (uses KCL to save to DynamoDB) |
+
+#### 3. How Checkpoints are Executed
+| Execution Type | Description |
+| :--- | :--- |
+| **Configuration-Driven** | You define the frequency, and the framework automatically handles the rest. (e.g., Spark, Flink). |
+| **Intentional (Manual)** | Your code explicitly confirms/commits the checkpoint after successfully reading and processing records. |
+
+#### 4. Trade-offs: Latency vs. Delivery Guarantee
+The biggest drawback of checkpointing is the latency it introduces.
+* **Position vs. State Tracking:** Tracking the *position* (a few numbers/offsets) is lightweight and fast. Tracking the *state* (e.g., complex user session data) is heavy and significantly impacts latency.
+* **Frequency Trade-off:** You must balance your latency requirements against your recovery needs.
+
+| Checkpoint Frequency | Pros | Cons |
+| :--- | :--- | :--- |
+| **High Frequency (More often)** | Less data to reprocess in the event of a failure. | Slower job performance due to constant metadata saving overhead. |
+| **Low Frequency (Less often)** | Faster job performance (less overhead). | More data to reprocess if a failure occurs. |
 
 
+[Top](#Index)
 
+# idempotency Design Patterns
+
+* **Idempotency:** A guarantee that no matter how many times a data processing job is executed, the final output remains consistent (yielding zero duplicates, or at least clearly identifiable ones).
+
+## OverWriting
+
+### Fast Metadata Cleaner
+
+* **Metadata Operations:** Operations that happen on the *logical* level rather than the *physical* level. Because they only modify the tiny layer describing the data files (rather than scanning the massive data files themselves), they are exceptionally fast.
+
+#### 1. Data Removal Operations
+When trying to achieve idempotency, the way you clear out old or failed data matters immensely for performance.
+
+| Operation | Level | Description & Performance |
+| :--- | :--- | :--- |
+| **DELETE** | Physical | Slow on large volumes. It is a two-step action: it must scan to identify specific rows, then overwrite the actual data files. |
+| **TRUNCATE TABLE** | Logical (Metadata) | Extremely fast. Removes all records exactly like a `DELETE` without conditions, but completely skips the expensive table scan. |
+| **DROP TABLE** | Logical (Metadata) | Extremely fast. Completely removes the table definition and its data. |
+
+#### 2. The Fast Metadata Cleaner Pattern
+* **Concept:** Uses `DROP TABLE` or `TRUNCATE TABLE` as the foundational building blocks to rapidly clear out data before re-running a job, ensuring a clean, idempotent slate.
+* **Mechanism:** Relies heavily on exact dataset partitioning and data orchestration to work correctly.
+
+#### 3. Limitations & Challenges
+* **Granularity Restraints:** The partitioning strategy directly locks in your idempotency and backfilling granularity. 
+* **The "All-or-Nothing" Partition Rule:** If your data is partitioned weekly, but you only need to fix one broken day, you are forced to `TRUNCATE`/`DROP` and rerun the entire week. (Though you can optimize this by only re-running the heavy logic for the broken day, and just doing a lightweight data load for the remaining valid days).
+* **No Fine-Grained Cleanups:** Because `TRUNCATE` and `DROP` operate on whole tables/partitions, you cannot use this pattern to backfill a single user or a specific data provider.
+* **Schema Evolution:** If a new optional field is added to a table, using this pattern would force a full, resource-heavy data reprocessing just to update the schema. Schema updates are better handled by isolated, dedicated pipelines.
 
 
 
