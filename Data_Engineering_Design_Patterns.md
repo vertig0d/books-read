@@ -315,6 +315,35 @@ When trying to achieve idempotency, the way you clear out old or failed data mat
 * **Schema Evolution:** If a new optional field is added to a table, using this pattern would force a full, resource-heavy data reprocessing just to update the schema. Schema updates are better handled by isolated, dedicated pipelines.
 
 
+### Data Overwrite Pattern 
+
+#### 1. Core Concept
+* **When to use:** Use this pattern when metadata operations (like `TRUNCATE` or `DROP`) are unavailable—such as in certain object stores—or when using the metadata layer requires too much effort. 
+* **Mechanism:** Instead of logical metadata manipulation, this pattern interacts directly with the physical data layer to clean out existing files before writing new ones.
+
+#### 2. Implementation Strategies
+
+**Framework-Based (Configuration-Driven)**
+Data processing frameworks often handle the heavy lifting of cleaning before writing through simple configurations.
+* **Apache Spark:** Controlled via `save mode` configurations.
+* **Apache Flink:** Controlled via `write mode` properties.
+* **Delta Lake:** Offers advanced *selective* overwriting. You can target specific parts of a dataset using the `replaceWhere` option.
+
+**Direct SQL Approaches**
+If you are interacting directly via SQL, you generally choose between two methods:
+| Approach | Description | Flexibility |
+| :--- | :--- | :--- |
+| **`DELETE FROM` + `INSERT INTO`** | A classic two-step database operation. | **High:** Supports conditional filtering so you can select exact rows to overwrite. |
+| **`INSERT OVERWRITE`** | A concise, single-command alternative to the above. | **Low:** Replaces the *entire* table blindly; lacks row-level selection support. |
+
+#### 3. Drawbacks & Mitigations
+* **Performance Degradation (The Scaling Problem):** Because this is a physical data operation, overwriting large, unpartitioned datasets becomes progressively slower over time as the data volume naturally grows.
+    * *Mitigation:* Apply **partitioning** to your datasets. This isolates the replacement action to smaller, specific chunks of data rather than the entire historical volume.
+* **"Dead Rows" & Storage Bloat:** In relational databases and modern table file formats, a `DELETE` operation doesn't usually wipe the data from the disk immediately. Instead, it marks the data blocks as inaccessible to `SELECT` queries, leaving "dead rows" behind.
+    * *Mitigation:* You must schedule and run a **vacuum process** periodically to permanently delete these dead rows and actually reclaim the underlying disk space.
+
+
+
 
 
 
