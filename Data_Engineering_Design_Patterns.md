@@ -342,7 +342,424 @@ If you are interacting directly via SQL, you generally choose between two method
 * **"Dead Rows" & Storage Bloat:** In relational databases and modern table file formats, a `DELETE` operation doesn't usually wipe the data from the disk immediately. Instead, it marks the data blocks as inaccessible to `SELECT` queries, leaving "dead rows" behind.
     * *Mitigation:* You must schedule and run a **vacuum process** periodically to permanently delete these dead rows and actually reclaim the underlying disk space.
 
+## Updates
 
+### The Challenge with Updated Incremental Datasets
+
+#### Why Full Replacement Doesn't Always Work
+
+For some datasets, achieving idempotency by deleting and reloading the entire dataset is straightforward.
+
+However, **updated incremental datasets** behave differently:
+
+- Each delivery contains only the records that changed.
+- The complete dataset is not available in every run.
+- Rewriting the entire dataset requires reconstructing the latest version of every entity first.
+- Backfills and reprocessing become more complex.
+
+#### Example
+
+| Run | Records Received |
+|------|------|
+| Day 1 | User 1, User 2, User 3 |
+| Day 2 | User 2 updated |
+| Day 3 | User 1 updated |
+
+The source only sends changes, not the full dataset.
+
+---
+
+### Pattern: Merger
+
+#### Purpose
+
+The **Merger Pattern** is used when only incremental changes are available and must be combined with an existing dataset.
+
+Instead of replacing the entire dataset:
+
+1. Read incoming changes.
+2. Match them against existing records.
+3. Update existing rows.
+4. Insert new rows.
+
+This is commonly implemented using:
+
+- **MERGE**
+- **UPSERT**
+
+operations.
+
+---
+
+#### How It Works
+
+#### Step 1: Define Merge Keys
+
+Identify attributes that uniquely identify a record.
+
+Examples:
+
+| Merge Key Type | Example |
+|------|------|
+| Single Column | User ID |
+| Composite Key | Customer ID + Order ID |
+
+The selected attributes must uniquely identify a row.
+
+---
+
+#### Step 2: Perform Merge
+
+Incoming data is merged into the target dataset.
+
+Pseudo Logic:
+
+```sql
+MERGE INTO target_table
+USING source_table
+ON target_table.user_id = source_table.user_id
+
+WHEN MATCHED THEN
+    UPDATE ...
+
+WHEN NOT MATCHED THEN
+    INSERT ...
+```
+
+---
+
+#### Critical Requirement: Uniqueness
+
+##### Why It Matters
+
+The merge process depends entirely on stable and immutable identifiers.
+
+Without uniqueness:
+
+- Updates may become inserts.
+- Duplicate records may appear.
+- Backfills may create inconsistent data.
+
+##### Good Candidate Keys
+
+- User ID
+- Customer ID
+- Order ID
+- Business-generated immutable identifiers
+
+##### Bad Candidate Keys
+
+- Name
+- Email (can change)
+- Address
+- Mutable business attributes
+
+---
+
+#### Performance Characteristics
+
+##### I/O Behavior
+
+The Merger Pattern is:
+
+- Data-driven
+- Compute-intensive
+- More expensive than metadata-only approaches
+
+Since data must be inspected and updated, storage reads and writes increase.
+
+##### Modern Optimizations
+
+Modern systems reduce unnecessary reads by using metadata.
+
+Examples:
+
+- Delta Lake
+- Apache Iceberg
+- Apache Hudi
+- Modern data warehouses
+
+Optimization process:
+
+1. Identify impacted records using metadata.
+2. Read only relevant files.
+3. Skip unaffected data blocks.
+
+This significantly reduces I/O.
+
+---
+
+#### Merger Pattern Trade-Offs
+
+| Advantage | Disadvantage |
+|------------|------------|
+| Supports incremental updates | Requires unique keys |
+| Avoids full reloads | Higher I/O cost |
+| Efficient for small changes | Backfills can become inconsistent |
+| Widely supported | More complex than truncate-and-load |
+
+---
+
+### Pattern: Stateful Merger
+
+#### Why Stateful Merger Exists
+
+The standard Merger Pattern focuses only on applying updates.
+
+Problem:
+
+- Backfills may overwrite data incorrectly.
+- Dataset consistency can be compromised.
+- Previous states are not easily restored.
+
+The **Stateful Merger Pattern** addresses this by maintaining additional state information.
+
+---
+
+#### Core Idea
+
+A separate **state table** tracks dataset versions.
+
+This allows:
+
+- Detection of backfills
+- Restoration of previous dataset versions
+- Consistent reprocessing
+
+---
+
+#### High-Level Workflow
+
+```text
+Pipeline Start
+      |
+      v
+Check State Table
+      |
+      v
+Backfill?
+  /      \
+Yes       No
+ |          |
+Restore    Continue
+Dataset    Normally
+ |          |
+ v          v
+MERGE New Data
+      |
+      v
+Update State Table
+      |
+      v
+Pipeline End
+```
+
+[Image of Stateful Merger Workflow]
+
+---
+
+#### Additional Components
+
+##### State Table
+
+Stores metadata such as:
+
+| Field | Purpose |
+|---------|---------|
+| Dataset Version | Current table version |
+| Execution Time | Pipeline run timestamp |
+| Previous Version | Version to restore if needed |
+
+---
+
+#### Backfill Detection Logic
+
+##### Option 1: Orchestrator-Based Detection
+
+If the orchestration platform exposes execution context:
+
+- Read pipeline metadata.
+- Determine whether execution is:
+  - Normal run
+  - Backfill run
+
+Examples:
+
+- Airflow
+- Databricks Workflows
+- Azure Data Factory
+- Dagster
+
+---
+
+##### Option 2: State Table-Based Detection
+
+If no execution context exists:
+
+Use dataset versions stored in the state table.
+
+---
+
+#### Detection Scenario 1: First Execution
+
+If no previous version exists:
+
+```sql
+TRUNCATE TABLE target_table;
+```
+
+Then:
+
+- Load data normally.
+- Update state table.
+
+This occurs when:
+
+- Pipeline runs for the first time.
+- First execution is being backfilled.
+
+---
+
+#### Detection Scenario 2: Normal Run
+
+Compare:
+
+- Current version
+- Previous execution version
+
+Example:
+
+| Execution | Version |
+|------------|------------|
+| Previous Run | 6 |
+| Current Run | 6 |
+
+Result:
+
+- Versions match.
+- No restoration required.
+- Proceed directly to merge.
+
+---
+
+#### Detection Scenario 3: Backfill Run
+
+Compare:
+
+| Execution | Version |
+|------------|------------|
+| Previous Version | 4 |
+| Latest Version | 6 |
+
+Result:
+
+- Versions differ.
+- Indicates backfill execution.
+- Dataset must be restored before merge.
+
+---
+
+#### Restore + Merge Process
+
+```text
+Detect Backfill
+      |
+      v
+Restore Dataset
+to Previous Version
+      |
+      v
+Apply MERGE
+      |
+      v
+Update State Table
+```
+
+This guarantees consistency during historical reprocessing.
+
+---
+
+#### Systems Without Table Versioning
+
+Some storage systems do not support native table versioning.
+
+Examples:
+
+- Traditional databases
+- Custom storage layers
+
+##### Alternative Approach
+
+Maintain a raw data table containing:
+
+| Column | Purpose |
+|----------|----------|
+| Execution Time | Pipeline execution timestamp |
+| Raw Data | Original records |
+
+---
+
+#### Alternative Backfill Detection
+
+Instead of checking table versions:
+
+Check whether future execution records already exist.
+
+Example:
+
+```text
+Current execution = 09:00
+
+Raw table contains:
+10:00 data
+11:00 data
+12:00 data
+```
+
+This indicates:
+
+- Data for future executions already exists.
+- Current run is likely a backfill.
+
+---
+
+#### Stateful Merger Trade-Offs
+
+| Advantage | Disadvantage |
+|------------|------------|
+| Handles backfills safely | Additional state table required |
+| Supports restoration | More pipeline complexity |
+| Maintains consistency | Extra storage overhead |
+| Better historical correctness | Additional version management |
+
+---
+
+#### Interview Notes
+
+##### When to Use Merger
+
+Use when:
+
+- Source provides incremental updates.
+- Unique keys exist.
+- Occasional inconsistency during backfills is acceptable.
+
+##### When to Use Stateful Merger
+
+Use when:
+
+- Historical correctness is critical.
+- Backfills are frequent.
+- Dataset restoration is required.
+- Regulatory or audit requirements exist.
+
+##### Key Interview Question
+
+**Why isn't MERGE alone sufficient for backfills?**
+
+Answer:
+
+A MERGE operation only applies incoming changes. It does not restore the dataset to the correct historical state before applying those changes. During backfills, this can lead to inconsistent results. A Stateful Merger solves this by restoring the appropriate dataset version before performing the merge.
 
 
 
