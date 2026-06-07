@@ -761,8 +761,697 @@ Answer:
 
 A MERGE operation only applies incoming changes. It does not restore the dataset to the correct historical state before applying those changes. During backfills, this can lead to inconsistent results. A Stateful Merger solves this by restoring the appropriate dataset version before performing the merge.
 
+## Keyed Idempotency
 
+### Problem
 
+A pipeline may retry due to:
+
+- Failures
+- Restarts
+- Backfills
+- Executor crashes
+
+Without protection, the same logical record may be written multiple times, creating duplicates.
+
+**Goal:**
+
+> Multiple executions should produce the same final result.
+
+---
+
+### Core Idea
+
+Use a database that supports keys and generate a **deterministic key** for every record.
+
+If the same record is processed again:
+
+- Same key is generated
+- Same row is targeted
+- Existing value is overwritten/replaced
+
+```text
+Same Input
+    ↓
+Same Key
+    ↓
+Same Row
+```
+
+---
+
+### Mental Model
+
+Instead of making the write operation idempotent:
+
+Make the **key generation** idempotent.
+
+```text
+Idempotency = Deterministic Key Generation
+```
+
+---
+
+### Example
+
+User session generation:
+
+```text
+User A visits site
+↓
+Session created
+↓
+Write session to database
+```
+
+If the job retries:
+
+```text
+Generate same session key
+↓
+Write again
+↓
+Existing row replaced
+```
+
+Result:
+
+```text
+1 session
+NOT 2 sessions
+```
+
+---
+
+### Golden Rule
+
+Use **immutable attributes** for key generation.
+
+#### Good Candidates
+
+- User ID
+- Order ID
+- Transaction ID
+- Append Time / Ingestion Time
+
+#### Bad Candidates
+
+- Event Time
+- Last Updated Time
+- Any field affected by late-arriving data
+
+---
+
+### Why Event Time Is Dangerous
+
+Suppose a session key is generated using:
+
+```text
+User ID + First Event Time
+```
+
+Original run:
+
+```text
+10:00
+10:05
+```
+
+After restart, a late event arrives:
+
+```text
+09:55
+10:00
+10:05
+```
+
+Now the first event changes from:
+
+```text
+10:00
+```
+
+to:
+
+```text
+09:55
+```
+
+Result:
+
+- New session key generated
+- Existing record not found
+- Duplicate session created
+- Idempotency broken
+
+---
+
+### Interview Soundbite
+
+> Event time is mutable from the pipeline's perspective because late-arriving data can change it. Prefer append time or ingestion time when generating idempotent keys.
+
+---
+
+### Where It Works Best
+
+#### Key-Value Databases
+
+Examples:
+
+- Cassandra
+- ScyllaDB
+- HBase
+
+Behavior:
+
+```text
+Write same key twice
+↓
+Latest value replaces old value
+```
+
+Perfect fit for Keyed Idempotency.
+
+---
+
+### Limitations / Gotchas
+
+#### 1. Database Dependent
+
+Relational databases do not automatically overwrite records with the same key.
+
+This fails:
+
+```sql
+INSERT INTO table (...)
+VALUES (...);
+```
+
+because it causes:
+
+```text
+Primary Key Violation
+```
+
+Instead use:
+
+```sql
+MERGE
+UPSERT
+ON CONFLICT
+```
+
+---
+
+#### 2. Kafka Is Different
+
+Kafka supports keys but is an append-only log.
+
+```text
+Kafka Key = Identifier
+NOT Immediate Deduplication
+```
+
+Example:
+
+```text
+Key=A Value=1
+Key=A Value=1
+```
+
+Both records may exist temporarily.
+
+Log compaction later removes older versions.
+
+Therefore:
+
+```text
+Kafka keys help identify duplicates
+but do not prevent them immediately.
+```
+
+---
+
+#### 3. Mutable Sources Can Break Idempotency
+
+If key generation depends on values that can change:
+
+- Late data
+- Retention cleanup
+- Compaction effects
+- Reordered inputs
+
+then the generated key may differ between runs.
+
+Result:
+
+```text
+Different Key
+↓
+Different Row
+↓
+Duplicate Business Record
+```
+
+---
+
+### When To Use
+
+Use Keyed Idempotency when:
+
+✅ Output store supports unique keys
+
+✅ Stable deterministic keys can be generated
+
+✅ Retries are common
+
+✅ Backfills are common
+
+✅ Latest-value semantics are acceptable
+
+Typical use cases:
+
+- User profiles
+- Session tables
+- Device status tables
+- Customer state tables
+- CDC state stores
+
+---
+
+### One-Line Summary
+
+> Keyed Idempotency guarantees repeatable writes by generating the same deterministic key from immutable attributes, allowing key-based databases to overwrite the same logical record instead of creating duplicates.
+
+---
+
+### Interview Memory Hook
+
+```text
+Retry Safe =
+Stable Key
++
+Immutable Attributes
++
+Key-Based Storage
+```
+
+## Transactional Writer
+
+### Problem
+
+A job may fail after writing only part of its output.
+
+Example:
+
+```text
+Task writes 1,000 records
+↓
+Infrastructure failure
+↓
+Task retries
+↓
+Writes same 1,000 records again
+```
+
+Result:
+
+- Duplicate records
+- Partial datasets visible to consumers
+- Inconsistent outputs
+
+The challenge is not just duplicates.
+
+The bigger problem is:
+
+> Consumers can see incomplete data while the job is still running.
+
+---
+
+### Core Idea
+
+Use database transactions so that data becomes visible only after the entire write succeeds.
+
+```text
+Begin Transaction
+        ↓
+Write Data
+        ↓
+Commit
+        ↓
+Consumers Can See Data
+```
+
+If anything fails:
+
+```text
+Begin Transaction
+        ↓
+Write Data
+        ↓
+Failure
+        ↓
+Rollback
+        ↓
+No Data Visible
+```
+
+---
+
+### Mental Model
+
+Think of a transaction as a **private workspace**.
+
+```text
+Without Transaction
+
+Write Row 1 → Visible
+Write Row 2 → Visible
+Write Row 3 → Failure
+
+Consumer sees:
+Row 1
+Row 2
+```
+
+```text
+With Transaction
+
+Write Row 1 → Hidden
+Write Row 2 → Hidden
+Write Row 3 → Hidden
+Commit
+
+Consumer sees:
+Row 1
+Row 2
+Row 3
+```
+
+Everything appears together.
+
+Or nothing appears at all.
+
+---
+
+### Why It Helps Idempotency
+
+Retries become safer.
+
+Without transactions:
+
+```text
+Attempt 1
+---------
+Write A
+Write B
+Failure
+
+Attempt 2
+---------
+Write A
+Write B
+Write C
+```
+
+Final output:
+
+```text
+A
+B
+A
+B
+C
+```
+
+Possible duplicates.
+
+With transactions:
+
+```text
+Attempt 1
+---------
+Write A
+Write B
+Failure
+Rollback
+
+Attempt 2
+---------
+Write A
+Write B
+Write C
+Commit
+```
+
+Final output:
+
+```text
+A
+B
+C
+```
+
+Only the successful transaction becomes visible.
+
+---
+
+### High-Level Workflow
+
+```text
+START TRANSACTION
+        ↓
+Write Data
+        ↓
+Success?
+   /        \
+ Yes         No
+  ↓           ↓
+COMMIT    ROLLBACK
+```
+
+---
+
+### Key Principle
+
+Transactions provide:
+
+**All-or-Nothing Semantics**
+
+```text
+100% Success → Publish Everything
+
+Anything Fails → Publish Nothing
+```
+
+---
+
+### Interview Soundbite
+
+> Transactional Writer achieves idempotency by ensuring partial writes are never exposed. Consumers see either the entire successful output or no output at all.
+
+---
+
+### Where It Works Best
+
+Databases with transaction support:
+
+- PostgreSQL
+- MySQL
+- SQL Server
+- Oracle
+- Snowflake
+- BigQuery
+- Redshift
+- Delta Lake
+- Apache Iceberg
+
+---
+
+### Typical Use Cases
+
+#### Batch Loads
+
+```text
+Load 100 million records
+↓
+Expose only when complete
+```
+
+---
+
+#### ELT Pipelines
+
+```text
+Transform data in warehouse
+↓
+Commit results atomically
+```
+
+---
+
+#### Incremental Loads
+
+```text
+Apply updates
+Apply inserts
+Apply deletes
+↓
+Commit together
+```
+
+---
+
+### Limitations / Gotchas
+
+#### 1. Database Support Required
+
+Not every storage system supports transactions.
+
+Works well:
+
+- Delta Lake
+- PostgreSQL
+- Snowflake
+
+Less suitable:
+
+- Raw CSV files
+- Plain object storage
+- Traditional append-only logs
+
+---
+
+#### 2. Transactions Do Not Eliminate Duplicate Logic
+
+Transaction:
+
+```text
+Protects Visibility
+```
+
+Not:
+
+```text
+Business Deduplication
+```
+
+If the same business record is written twice in two separate successful transactions:
+
+```text
+Transaction #1 → Commit
+Transaction #2 → Commit
+```
+
+Duplicates can still exist.
+
+You often combine:
+
+- Transactional Writer
+- MERGE / UPSERT
+- Keyed Idempotency
+
+---
+
+#### 3. Long Transactions Can Be Expensive
+
+Large transactions may:
+
+- Hold locks
+- Consume memory
+- Increase contention
+- Reduce concurrency
+
+Example:
+
+```text
+1 minute transaction → Fine
+
+3 hour transaction → Risky
+```
+
+---
+
+### Comparison With Keyed Idempotency
+
+| Aspect | Keyed Idempotency | Transactional Writer |
+|----------|----------|----------|
+| Main Goal | Prevent duplicate business records | Prevent partial writes |
+| Relies On | Deterministic keys | Database transactions |
+| Protects Against | Retries creating duplicates | Failures during writes |
+| Typical Storage | Cassandra, HBase, ScyllaDB | PostgreSQL, Delta Lake, Snowflake |
+| Guarantees | Same record targets same key | All-or-nothing visibility |
+
+---
+
+### Real-World Analogy
+
+Online Banking Transfer:
+
+```text
+Debit Account A
+Credit Account B
+```
+
+Without transaction:
+
+```text
+Debit succeeds
+Credit fails
+```
+
+Money disappears.
+
+With transaction:
+
+```text
+Debit succeeds
+Credit succeeds
+COMMIT
+```
+
+or
+
+```text
+Debit succeeds
+Credit fails
+ROLLBACK
+```
+
+No inconsistent state.
+
+A Transactional Writer applies the same idea to data pipelines.
+
+---
+
+### One-Line Summary
+
+> Transactional Writer uses database transactions to guarantee that consumers never see partial results, exposing data only after a successful commit.
+
+---
+
+### Interview Memory Hook
+
+```text
+Transactional Writer =
+BEGIN
++
+WRITE
++
+COMMIT
+
+Failure
+↓
+ROLLBACK
+```
+
+Remember:
+
+```text
+Keyed Idempotency → Same Record
+
+Transactional Writer → Same Transaction
+```
 
 
 
