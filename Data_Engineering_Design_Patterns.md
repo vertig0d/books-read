@@ -1453,6 +1453,727 @@ Keyed Idempotency → Same Record
 Transactional Writer → Same Transaction
 ```
 
+[Top](#Index)
 
+# Data Value Design Pattern
 
+## Data Enrichment
 
+Often, raw data will be poor because of technical constraints. they’ll rarely be capable of providing extra information, such as the last connection date or a user profile score in the context of our visits example. Data enrichment patterns overcome this limitation and make data more useful for different stakeholders.
+
+### Static Joiner
+
+#### Problem
+
+Raw data often lacks sufficient business context.
+
+Example:
+
+| user_id | page |
+|----------|----------|
+| 101 | /products |
+| 102 | /cart |
+
+This data alone can answer only limited questions.
+
+To generate meaningful insights, we often need additional context:
+
+| user_id | country |
+|----------|----------|
+| 101 | India |
+| 102 | Germany |
+
+After enrichment:
+
+| user_id | page | country |
+|----------|----------|----------|
+| 101 | /products | India |
+| 102 | /cart | Germany |
+
+Now we can answer:
+
+- Which countries visit product pages most?
+- Which customer segments generate the most revenue?
+- Which device types produce the highest engagement?
+
+---
+
+#### Core Idea
+
+A Static Joiner enriches data using a **preloaded reference dataset**.
+
+```text
+Raw Data
+    +
+Reference Dataset
+    ↓
+Enriched Dataset
+```
+
+The reference dataset is loaded before processing begins and is treated as a stable snapshot during the execution.
+
+---
+
+#### Mental Model
+
+Think:
+
+```text
+Fact Data
++
+Reference Data
+=
+Enriched Data
+```
+
+Examples:
+
+| Fact Data | Reference Data |
+|------------|------------|
+| Website visits | Country lookup |
+| Orders | Product catalog |
+| Transactions | Customer master |
+| Device events | Device metadata |
+
+The join itself is not the goal.
+
+The goal is:
+
+```text
+Data Enrichment
+```
+
+---
+
+#### Why Not Use APIs?
+
+Instead of:
+
+```text
+Event
+↓
+API Call
+↓
+Get Metadata
+```
+
+for every record,
+
+we load the enrichment dataset once and perform a local join.
+
+Bad:
+
+```text
+100M Events
+↓
+100M API Calls
+```
+
+Good:
+
+```text
+Load Lookup Table Once
+↓
+Local Join
+↓
+Process 100M Events
+```
+
+Benefits:
+
+- Lower latency
+- Lower operational cost
+- Reduced dependency on external services
+- Better scalability
+
+---
+
+#### What Makes It "Static"?
+
+Static does **not** mean:
+
+❌ Data never changes
+
+❌ Timestamps are immutable
+
+❌ Table is read-only
+
+Static means:
+
+> The enrichment dataset is relatively stable and available before processing begins.
+
+Example:
+
+```text
+Customer Table Snapshot
+
+101 → Gold
+102 → Silver
+```
+
+Job starts at:
+
+```text
+10:00 AM
+```
+
+The job uses that version throughout processing, even if the customer status changes later.
+
+The reference dataset is treated as a snapshot for that execution.
+
+---
+
+#### Historical Consistency Problem
+
+Reference data often changes over time.
+
+Example:
+
+```text
+January  → Silver
+February → Gold
+March    → Platinum
+```
+
+A late-arriving January event appears in March.
+
+Question:
+
+```text
+Which customer status should be attached?
+```
+
+Wrong:
+
+```text
+Current Status = Platinum
+```
+
+Correct:
+
+```text
+Historical Status = Silver
+```
+
+This is where Slowly Changing Dimensions (SCD) become important.
+
+---
+
+#### SCD Type 2 Solution
+
+Store the history of changes.
+
+Instead of:
+
+| customer_id | status |
+|-------------|---------|
+| 101 | Platinum |
+
+Store:
+
+| customer_id | status | valid_from | valid_to |
+|-------------|---------|------------|-----------|
+| 101 | Silver | Jan | Feb |
+| 101 | Gold | Feb | Mar |
+| 101 | Platinum | Mar | NULL |
+
+Now enrichment can use:
+
+```sql
+event_time BETWEEN valid_from AND valid_to
+```
+
+to retrieve the historically correct version.
+
+---
+
+#### Why Idempotency Matters
+
+Suppose:
+
+Run #1:
+
+```text
+Customer 101 = Gold
+```
+
+Output generated.
+
+Months later:
+
+```text
+Customer 101 = Platinum
+```
+
+You backfill old events.
+
+Without historical tracking:
+
+```text
+Old Events
+↓
+Join Current Data
+↓
+Different Results
+```
+
+Output changes.
+
+Idempotency is broken.
+
+With SCD Type 2:
+
+```text
+Old Events
+↓
+Join Historical Version
+↓
+Same Results
+```
+
+Backfills remain consistent.
+
+---
+
+#### Benefits
+
+✅ Fast enrichment
+
+✅ Eliminates excessive API calls
+
+✅ Scales well for large datasets
+
+✅ Enables historical analysis
+
+✅ Supports reproducible backfills
+
+---
+
+#### Limitations / Gotchas
+
+##### 1. Late Arriving Data
+
+Late events may require historical versions of lookup data.
+
+Without versioning, enrichment can be incorrect.
+
+---
+
+##### 2. Changing Reference Data
+
+Customer attributes, product catalogs, device metadata, etc. evolve over time.
+
+Historical tracking may be required.
+
+---
+
+##### 3. Idempotency Concerns
+
+Reprocessing old events using current lookup values can produce different results.
+
+SCD Type 2 helps preserve consistency.
+
+---
+
+#### Static Joiner vs Dynamic Joiner
+
+| Static Joiner | Dynamic Joiner |
+|---------------|---------------|
+| Reference data loaded beforehand | Reference data fetched during processing |
+| Low latency | Higher latency |
+| Suitable for relatively stable datasets | Suitable for frequently changing datasets |
+| Local joins | External lookups or continuously refreshed joins |
+| Easier to scale | More operational complexity |
+
+---
+
+#### One-Line Summary
+
+> A Static Joiner enriches data by joining it with a preloaded, relatively stable reference dataset, often using SCD Type 2 history tracking to ensure correctness for late-arriving data and backfills.
+
+---
+
+#### Interview Memory Hook
+
+```text
+Static Joiner =
+Preloaded Lookup
++
+Local Join
++
+(Optional) SCD Type 2
+=
+Fast & Historically Correct Enrichment
+```
+
+### Dynamic Joiner
+
+#### Problem
+
+A Static Joiner works well when the enrichment dataset changes slowly and can be treated as a snapshot.
+
+Example:
+
+```text
+Orders Stream
++
+Country Lookup Table
+```
+
+However, some enrichment datasets change continuously.
+
+Examples:
+
+```text
+Orders Stream
++
+Customer Status Stream
+```
+
+```text
+Transactions Stream
++
+Account Updates Stream
+```
+
+```text
+Device Events Stream
++
+Device Configuration Updates Stream
+```
+
+In these scenarios, a snapshot quickly becomes stale and may produce incorrect enrichment results.
+
+---
+
+#### Core Idea
+
+A Dynamic Joiner enriches data using a continuously changing enrichment source.
+
+```text
+Main Stream
++
+Live Enrichment Stream
+↓
+Enriched Output
+```
+
+Unlike a Static Joiner, the enrichment side is continuously updated during processing.
+
+---
+
+#### Mental Model
+
+Think:
+
+```text
+Static Joiner
+=
+Snapshot Lookup
+```
+
+```text
+Dynamic Joiner
+=
+Live Lookup
+```
+
+The goal is to always enrich records using the most recent available information.
+
+---
+
+#### Why Static Joiner Becomes Insufficient
+
+Suppose customer status changes frequently:
+
+```text
+Customer 101
+
+10:00 → Silver
+10:05 → Gold
+10:10 → Platinum
+```
+
+If the lookup table was loaded at:
+
+```text
+10:00
+```
+
+all events processed afterward may still be enriched with:
+
+```text
+Silver
+```
+
+which is no longer accurate.
+
+Dynamic Joiner solves this by continuously incorporating updates from the enrichment source.
+
+---
+
+#### Typical Architecture
+
+```text
+Orders Stream
+        +
+Customer Updates Stream
+        ↓
+Dynamic Join
+        ↓
+Enriched Orders
+```
+
+Both sides may be:
+
+- Streaming datasets
+- Near real-time feeds
+- Frequently changing tables
+
+---
+
+#### The State Problem
+
+To perform a dynamic join, the framework must temporarily remember records from both streams.
+
+```text
+Orders State
++
+Customer State
+```
+
+This state is required because matching records may not arrive at the same time.
+
+Example:
+
+```text
+Order Event
+10:00:05
+```
+
+```text
+Customer Update
+10:00:30
+```
+
+The framework must retain the first record while waiting for the second.
+
+---
+
+#### Why Watermarks Are Needed
+
+Without cleanup:
+
+```text
+State Store
+↓
+Keeps Growing Forever
+```
+
+Result:
+
+- Excessive memory usage
+- Larger checkpoints
+- Slower processing
+- Potential OOM failures
+
+To prevent this, frameworks use watermarks.
+
+---
+
+#### Garbage Collection Watermark
+
+A garbage collection watermark determines how long the framework should retain state while waiting for matching records.
+
+Example:
+
+```text
+Allowed Lateness = 10 Minutes
+```
+
+Current Event Time:
+
+```text
+12:30
+```
+
+Watermark:
+
+```text
+12:20
+```
+
+State older than:
+
+```text
+12:20
+```
+
+can be safely removed.
+
+---
+
+#### Mental Model for Watermarks
+
+Watermark is NOT:
+
+```text
+A Join Mechanism
+```
+
+Watermark IS:
+
+```text
+Late Data Tolerance
++
+State Cleanup Trigger
+```
+
+or simply:
+
+```text
+How Long Should I Keep Waiting?
+```
+
+---
+
+#### Watermark Trade-Off
+
+##### Small Watermark
+
+```text
+1 Minute
+```
+
+Pros:
+
+- Lower memory usage
+- Smaller state store
+- Faster checkpoints
+
+Cons:
+
+- More late records discarded
+- More missed joins
+
+---
+
+##### Large Watermark
+
+```text
+1 Hour
+```
+
+Pros:
+
+- Better join completeness
+- Handles more late data
+
+Cons:
+
+- Larger state store
+- Higher memory usage
+- Slower checkpoints
+
+---
+
+#### Benefits
+
+✅ Real-time enrichment
+
+✅ Uses latest available reference data
+
+✅ Suitable for continuously changing datasets
+
+✅ Better freshness than Static Joiner
+
+---
+
+#### Limitations / Gotchas
+
+##### 1. Stateful Operation
+
+The framework must maintain state for both sides of the join.
+
+This increases:
+
+- Memory usage
+- Checkpoint size
+- Operational complexity
+
+---
+
+##### 2. Watermark Tuning
+
+Choosing the wrong watermark can result in:
+
+- Missed joins
+- Excessive memory usage
+
+---
+
+##### 3. Late Arriving Data
+
+Very late records may arrive after state has already been removed.
+
+Result:
+
+```text
+Record Arrives
+↓
+Matching State Gone
+↓
+Join Missed
+```
+
+---
+
+##### 4. Scalability Cost
+
+Dynamic joins are typically more expensive than static joins because both sides continuously change.
+
+---
+
+#### Static Joiner vs Dynamic Joiner
+
+| Static Joiner | Dynamic Joiner |
+|---------------|---------------|
+| Uses snapshot lookup data | Uses continuously changing lookup data |
+| Simple implementation | Stateful implementation |
+| Lower memory usage | Higher memory usage |
+| No state retention required | State retention required |
+| Best for slowly changing datasets | Best for frequently changing datasets |
+| Usually stream-table join | Often stream-stream join |
+
+---
+
+#### One-Line Summary
+
+> A Dynamic Joiner enriches data using a continuously changing enrichment source, typically requiring state management and watermarks to handle out-of-order and late-arriving records.
+
+---
+
+#### Interview Memory Hook
+
+```text
+Dynamic Joiner =
+Live Enrichment
++
+State Management
++
+Watermarks
+=
+Real-Time Context
+```
+
+Remember:
+
+```text
+Static Joiner
+=
+Snapshot Lookup
+
+Dynamic Joiner
+=
+Live Lookup
+```
